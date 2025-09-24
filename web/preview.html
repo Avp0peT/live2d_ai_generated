@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Live2D Pixi 预览</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #0f1115; color: #eaeef2; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+      #toolbar { padding: 12px; background: #151922; position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: center; }
+      input, button { background: #1c2230; color: #eaeef2; border: 1px solid #2a3245; padding: 6px 8px; border-radius: 6px; }
+      button { cursor: pointer; }
+      #stage { width: 100%; height: calc(100% - 56px); }
+    </style>
+    <!-- 静态引用（可能被拦截，下面的动态加载会兜底） -->
+    <script src="https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi.js@7/dist/browser/pixi.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pixi-live2d-display@3/dist/index.min.js"></script>
+  </head>
+  <body>
+    <div id="toolbar">
+      <label>模型目录: <input type="text" id="modelDir" placeholder="outputs/ai_full_all_001" size="36" /></label>
+      <button id="loadBtn">加载</button>
+      <label>AngleX: <input type="range" id="angleX" min="-30" max="30" step="1" value="0" /></label>
+      <label>EyeBlink: <input type="range" id="blink" min="0" max="1" step="0.05" value="1" /></label>
+      <button id="exprSmile">表情: Smile</button>
+      <button id="exprNeutral">表情: Neutral</button>
+      <label>动作: <select id="motionSelect"></select></label>
+      <button id="playMotion">播放</button>
+      <span id="status"></span>
+    </div>
+    <div id="stage"></div>
+    <script>
+      // 添加 process polyfill 以解决 pixi-live2d-display 的兼容性问题
+      if (typeof process === 'undefined') {
+        window.process = {
+          env: {},
+          nextTick: function(fn) { setTimeout(fn, 0); },
+          version: 'v16.0.0'
+        };
+      }
+      
+      let app = null;
+      async function loadScript(url){
+        return new Promise((resolve, reject)=>{
+          const s = document.createElement('script');
+          s.src = url; s.async = true; s.onload = ()=>resolve(url); s.onerror = ()=>reject(new Error('load fail '+url));
+          document.head.appendChild(s);
+        });
+      }
+      async function tryLoad(urls){
+        for(const u of urls){
+          try{ 
+            console.log(`🔄 尝试加载: ${u}`);
+            await loadScript(u); 
+            console.log(`✅ 成功加载: ${u}`);
+            return u; 
+          }catch(e){ 
+            console.warn(`❌ 加载失败: ${u}`, e.message); 
+          }
+        }
+        throw new Error('All CDNs failed for '+urls[0]);
+      }
+      async function ensureDeps(){
+        console.log('🔧 开始加载依赖...');
+        
+        // Cubism Core（优先已有，否则尝试再次加载）
+        if(!window.Live2DCubismCore){
+          console.log('📦 加载 Cubism Core...');
+          await tryLoad([
+            '/web/lib/live2dcubismcore.min.js',
+            'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js'
+          ]);
+        } else {
+          console.log('✅ Cubism Core 已存在');
+        }
+        
+        // PIXI
+        if(!window.PIXI){
+          console.log('🎮 加载 PIXI...');
+          await tryLoad([
+            '/web/lib/pixi.min.js',
+            'https://cdn.jsdelivr.net/npm/pixi.js@7/dist/browser/pixi.min.js',
+            'https://unpkg.com/pixi.js@7/dist/browser/pixi.min.js',
+            'https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.2.4/pixi.min.js'
+          ]);
+        } else {
+          console.log('✅ PIXI 已存在');
+        }
+        
+        // pixi-live2d-display (Cubism 4 version)
+        if(!window.PIXI?.live2d){
+          console.log('🎭 加载 pixi-live2d-display...');
+          await tryLoad([
+            '/web/lib/pixi-live2d-display.min.js',
+            'https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.5.0-beta/dist/cubism4.min.js',
+            'https://unpkg.com/pixi-live2d-display@0.5.0-beta/dist/cubism4.min.js'
+          ]);
+        } else {
+          console.log('✅ pixi-live2d-display 已存在');
+        }
+        
+        console.log('🎉 依赖加载完成');
+      }
+      function ensurePixi() {
+        const status = document.getElementById('status');
+        if (!window.PIXI) {
+          status.textContent = '× PIXI 未加载（可能是 CDN 被拦截）';
+          throw new Error('PIXI not loaded');
+        }
+        if (!PIXI.live2d) {
+          status.textContent = '× pixi-live2d-display 未加载（可能是 CDN 被拦截）';
+          throw new Error('pixi-live2d-display not loaded');
+        }
+        if (!app) {
+          app = new PIXI.Application({ backgroundAlpha: 0, resizeTo: document.getElementById('stage') });
+          document.getElementById('stage').appendChild(app.view);
+        }
+      }
+
+      async function findModelJson(dir){
+        dir = dir.replace(/\\/g, '/');
+        const base = dir.startsWith('/') ? dir : '/' + dir; // 站点根路径解析
+        const segs = base.split('/').filter(Boolean);
+        const dname = segs[segs.length - 1] || 'model';
+        const candidates = [
+          'model.model3.json',                 // 兼容固定命名
+          `${dname}.model3.json`,              // 目录名相同
+          'model3.json'                        // 简短命名
+        ];
+        for(const n of candidates){
+          try{
+            const url = `${base}/${n}`;
+            const r = await fetch(url, { method: 'HEAD' });
+            if(r.ok) return url;
+          }catch(e){}
+        }
+        // 兜底：返回第一候选
+        return `${base}/model.model3.json`;
+      }
+
+      let currentModel = null;
+      let currentMotions = {};
+      // 视图变换参数
+      let baseScale = 1;     // 自适应计算得到的基础缩放
+      let userScale = 1;     // 用户滚轮额外缩放系数
+      let panX = 0, panY = 0;// 用户平移（像素）
+      let isDragging = false, lastX = 0, lastY = 0;
+
+      function clamp(v, min, max){ return Math.max(min, Math.min(max, v)); }
+
+      function applyTransform(){
+        if(!app || !currentModel) return;
+        const vw = app.renderer.width;
+        const vh = app.renderer.height;
+        const s = baseScale * userScale;
+        currentModel.scale.set(s);
+        currentModel.position.set(vw * 0.5 + panX, vh * 0.95 + panY);
+      }
+
+      function fitModelToView() {
+        if (!app || !currentModel) return;
+        const vw = app.renderer.width;
+        const vh = app.renderer.height;
+        // 优先使用模型当前的像素尺寸
+        let mw = currentModel.width || 0;
+        let mh = currentModel.height || 0;
+        // 兜底：从 Cubism Core 读取画布尺寸
+        if ((!mw || !mh) && currentModel.internalModel?.coreModel) {
+          try {
+            const core = currentModel.internalModel.coreModel;
+            mw = (typeof core.getCanvasWidth === 'function') ? core.getCanvasWidth() : 2.0;
+            mh = (typeof core.getCanvasHeight === 'function') ? core.getCanvasHeight() : 2.0;
+          } catch(e) {}
+        }
+        // 最终兜底，避免除0
+        if (!mw || !mh) { mw = 1000; mh = 1200; }
+        baseScale = Math.min(vw / mw, vh / mh) * 0.9; // 留10%边距
+        applyTransform();
+      }
+      async function load(){
+        const dir = document.getElementById('modelDir').value.trim().replace(/\\\\/g,'/');
+        const status = document.getElementById('status');
+        status.textContent = '加载中…';
+        try{
+          await ensureDeps();
+          ensurePixi();
+          const url = await findModelJson(dir);
+          // pixi-live2d-display v3 用 Live2DModel.from() (Cubism 4)，v0.4.0 属于 Cubism 2 版本
+          let mdl = null;
+          if (PIXI.live2d?.Live2DModel) {
+            mdl = await PIXI.live2d.Live2DModel.from(url);
+          } else if (PIXI.live2d?.Live2DModelWebGL) {
+            // 旧版 API（兜底，不保证兼容 model3.json）
+            throw new Error('当前 pixi-live2d-display 版本不支持 Cubism 4 model3.json。请使用 CDN 可用的 v3 版本或改用 Web SDK。');
+          } else {
+            throw new Error('pixi-live2d-display 未提供可用的 Live2DModel 接口');
+          }
+          // 读取 model3.json 以发现动作分组
+          const res = await fetch(url);
+          const json = await res.json();
+          currentMotions = (json.FileReferences && json.FileReferences.Motions) || {};
+          app.stage.removeChildren();
+          app.stage.addChild(mdl);
+          mdl.anchor.set(0.5, 1.0);
+          currentModel = mdl;
+          fitModelToView();
+          // 若模型含有布局信息（如 Canvas 信息、尺寸校正），尝试应用额外缩放/偏移
+          try {
+            const canvasInfo = json?.Canvas || json?.Meta?.Canvas || null;
+            if (canvasInfo && typeof canvasInfo.Width === 'number' && typeof canvasInfo.Height === 'number') {
+              // 基于 Canvas 尺寸再次微调，避免只显示局部
+              const vw = app.renderer.width, vh = app.renderer.height;
+              baseScale = Math.min(vw / canvasInfo.Width, vh / canvasInfo.Height) * 0.9;
+              applyTransform();
+            }
+          } catch(e) {}
+          // 监听窗口或容器尺寸变化，保持自适应
+          window.removeEventListener('resize', fitModelToView);
+          window.addEventListener('resize', fitModelToView);
+          try {
+            const stageEl = document.getElementById('stage');
+            if (window.ResizeObserver && stageEl) {
+              if (window.__live2dStageObserver) window.__live2dStageObserver.disconnect();
+              window.__live2dStageObserver = new ResizeObserver(()=>fitModelToView());
+              window.__live2dStageObserver.observe(stageEl);
+            }
+          } catch(e) {}
+
+          // 交互只需设置一次
+          setupInteractions();
+          
+          // 填充动作下拉
+          const motionSel = document.getElementById('motionSelect');
+          motionSel.innerHTML = '';
+          Object.entries(currentMotions).forEach(([group, list])=>{
+            if(Array.isArray(list)){
+              list.forEach(item=>{
+                const opt = document.createElement('option');
+                opt.value = JSON.stringify({group, name: (item.Name||'')});
+                opt.textContent = `${group}:${item.Name||'(unnamed)'}`;
+                motionSel.appendChild(opt);
+              });
+            }
+          });
+          status.textContent = '✓';
+        }catch(e){
+          console.error(e);
+          status.textContent = '× ' + (e && (e.stack||e.message) || e);
+        }
+      }
+      document.getElementById('loadBtn').addEventListener('click', load);
+
+      // 交互设置（滚轮缩放、WASD/方向键平移、拖拽平移）
+      function setupInteractions(){
+        if(!app || window.__live2dInteractionsSetup) return;
+        const canvas = app.view;
+        // 鼠标滚轮缩放
+        canvas.addEventListener('wheel', (e)=>{
+          e.preventDefault();
+          const factor = e.deltaY < 0 ? 1.1 : (1/1.1);
+          userScale = clamp(userScale * factor, 0.2, 8);
+          applyTransform();
+        }, { passive: false });
+
+        // 拖拽平移
+        canvas.addEventListener('mousedown', (e)=>{
+          if(e.button !== 0 && e.button !== 1) return; // 左键或中键
+          isDragging = true; lastX = e.clientX; lastY = e.clientY;
+        });
+        window.addEventListener('mousemove', (e)=>{
+          if(!isDragging) return;
+          const dx = e.clientX - lastX;
+          const dy = e.clientY - lastY;
+          lastX = e.clientX; lastY = e.clientY;
+          panX += dx; panY += dy;
+          applyTransform();
+        });
+        window.addEventListener('mouseup', ()=>{ isDragging = false; });
+        canvas.addEventListener('mouseleave', ()=>{ isDragging = false; });
+
+        // 键盘平移与重置
+        window.addEventListener('keydown', (e)=>{
+          const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
+          if(tag === 'input' || tag === 'textarea' || tag === 'select') return;
+          const step = e.shiftKey ? 50 : 20;
+          let used = true;
+          switch(e.key){
+            case 'w': case 'ArrowUp':    panY -= step; break;
+            case 's': case 'ArrowDown':  panY += step; break;
+            case 'a': case 'ArrowLeft':  panX -= step; break;
+            case 'd': case 'ArrowRight': panX += step; break;
+            case '+': case '=':          userScale = clamp(userScale * 1.1, 0.2, 8); break;
+            case '-': case '_':          userScale = clamp(userScale / 1.1, 0.2, 8); break;
+            case '0': case 'r': case 'R':
+              userScale = 1; panX = 0; panY = 0; fitModelToView(); break;
+            default: used = false;
+          }
+          if(used){ e.preventDefault(); applyTransform(); }
+        });
+
+        window.__live2dInteractionsSetup = true;
+      }
+
+      // 参数滑块
+      document.getElementById('angleX').addEventListener('input', (ev)=>{
+        if(!currentModel) return;
+        currentModel.internalModel.coreModel.setParameterValueById('ParamAngleX', parseFloat(ev.target.value));
+      });
+      document.getElementById('blink').addEventListener('input', (ev)=>{
+        if(!currentModel) return;
+        const v = parseFloat(ev.target.value);
+        currentModel.internalModel.coreModel.setParameterValueById('ParamEyeLOpen', v);
+        currentModel.internalModel.coreModel.setParameterValueById('ParamEyeROpen', v);
+      });
+
+      // 简单表情切换（需存在同名 exp）
+      document.getElementById('exprSmile').addEventListener('click', ()=>{
+        if(!currentModel) return;
+        try{ currentModel.motion('Expression', {name: 'auto_smile', fadeIn: 200, fadeOut: 200}); }catch(e){}
+      });
+      document.getElementById('exprNeutral').addEventListener('click', ()=>{
+        if(!currentModel) return;
+        try{ currentModel.motion('Expression', {name: 'mtn_ex_010.exp3.json', fadeIn: 200, fadeOut: 200}); }catch(e){}
+      });
+
+      // 播放所选动作
+      document.getElementById('playMotion').addEventListener('click', ()=>{
+        if(!currentModel) return;
+        const motionSel = document.getElementById('motionSelect');
+        if(!motionSel.value) return;
+        try{
+          const sel = JSON.parse(motionSel.value);
+          currentModel.motion(sel.group, { name: sel.name, fadeIn: 200, fadeOut: 200 });
+        }catch(e){}
+      });
+    </script>
+  </body>
+  </html>

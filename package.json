@@ -1,0 +1,16 @@
+{
+  "name": "live2",
+  "version": "1.0.0",
+  "description": "基于现有 Live2D 模型数据集，自动生成新的 Live2D 模型的完整工具链。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "pixi-live2d-display": "^0.5.0-beta",
+    "pixi.js": "^7.4.3"
+  }
+}

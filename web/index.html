@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Live2D Web 预览</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #0f1115; color: #eaeef2; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; }
+      #toolbar { padding: 12px; background: #151922; position: sticky; top: 0; z-index: 1; display: flex; gap: 8px; align-items: center; }
+      #log { white-space: pre-line; font-size: 12px; opacity: 0.8; }
+      canvas { display: block; margin: 0 auto; background: #0b0e14; }
+      input, select, button { background: #1c2230; color: #eaeef2; border: 1px solid #2a3245; padding: 6px 8px; border-radius: 6px; }
+      button { cursor: pointer; }
+    </style>
+    <!-- 这里演示静态页面，不引入实际Live2D SDK。可在后续接入 cubism-web-sdk。 -->
+  </head>
+  <body>
+    <div id="toolbar">
+      <label>模型目录: <input type="text" id="modelDir" placeholder="outputs/ai_full_all_001" size="32" /></label>
+      <button id="loadBtn">加载 model3.json</button>
+      <span id="status"></span>
+    </div>
+    <div style="padding: 12px; max-width: 960px; margin: 0 auto;">
+      <p>此页面是最小 Web 预览占位。输入模型目录（包含 *.model3.json），点击“加载”后将检查文件结构并显示摘要。后续可替换为基于 Cubism Web SDK 的实时渲染。</p>
+      <pre id="log"></pre>
+    </div>
+    <script>
+      const $ = (s)=>document.querySelector(s);
+      async function loadModel(){
+        const dir = $('#modelDir').value.trim();
+        const status = $('#status');
+        const log = $('#log');
+        status.textContent = '加载中…';
+        log.textContent = '';
+        try {
+          // 简单探测：拉取目录下的第一个 *.model3.json
+          // 由于浏览器限制，无法直接读取本地文件系统。该页面预期在本地静态服务器上运行。
+          // 示例：使用 Live Server / http-server 将仓库作为根目录提供。
+          const modelJsonUrl = dir.replace(/\\/g,'/') + '/' + (await guessModelJsonName(dir));
+          const resp = await fetch(modelJsonUrl);
+          if(!resp.ok){ throw new Error('无法获取 '+modelJsonUrl); }
+          const data = await resp.json();
+          const files = [].concat(
+            (data.FileReferences && data.FileReferences.Textures) || [],
+            (data.FileReferences && data.FileReferences.Physics ? [data.FileReferences.Physics] : []),
+            (data.FileReferences && data.FileReferences.Pose ? [data.FileReferences.Pose] : [])
+          );
+          log.textContent = '加载成功\n' + JSON.stringify({
+            Version: data.Version,
+            Textures: (data.FileReferences && data.FileReferences.Textures)||[],
+            Motions: Object.keys((data.FileReferences && data.FileReferences.Motions)||{}),
+            Expressions: (data.FileReferences && data.FileReferences.Expressions)||[],
+          }, null, 2);
+          status.textContent = '✓';
+        } catch (e) {
+          status.textContent = '×';
+          log.textContent = '加载失败: ' + e.message + '\n提示：使用本地静态服务器打开本页面，并确保模型目录可被访问。';
+        }
+      }
+      async function guessModelJsonName(dir){
+        // 常见命名：<name>.model3.json 或 model.model3.json
+        const tryNames = ['model.model3.json'];
+        for(const n of tryNames){
+          const url = dir.replace(/\\/g,'/') + '/' + n;
+          try {
+            const r = await fetch(url, { method: 'HEAD' });
+            if(r.ok) return n;
+          } catch(e){}
+        }
+        // 退化：用户自行填写完整路径
+        return 'model.model3.json';
+      }
+      $('#loadBtn').addEventListener('click', loadModel);
+    </script>
+  </body>
+  </html>
+
+

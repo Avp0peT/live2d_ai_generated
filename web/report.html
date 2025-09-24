@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>质量评估报告</title>
+    <style>
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:#0f1115; color:#eaeef2; }
+      #toolbar { padding: 12px; background: #151922; display:flex; gap:8px; align-items:center; position:sticky; top:0; }
+      input, button { background: #1c2230; color: #eaeef2; border: 1px solid #2a3245; padding: 6px 8px; border-radius: 6px; }
+      button { cursor: pointer; }
+      .container { padding: 12px; max-width: 1100px; margin: 0 auto; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { border-bottom: 1px solid #2a3245; padding: 6px 8px; text-align:left; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  </head>
+  <body>
+    <div id="toolbar">
+      <label>JSON路径: <input id="jsonPath" size="40" placeholder="reports/quality_report.json" /></label>
+      <button id="loadBtn">加载</button>
+    </div>
+    <div class="container">
+      <canvas id="chart" height="120"></canvas>
+      <h3>明细</h3>
+      <table id="tbl"><thead><tr><th>参考</th><th>生成</th><th>数量</th><th>PSNR</th><th>SSIM</th></tr></thead><tbody></tbody></table>
+    </div>
+    <script>
+      const $ = s=>document.querySelector(s);
+      let chart;
+      async function load(){
+        const p = $('#jsonPath').value.trim();
+        const res = await fetch(p);
+        const data = await res.json();
+        const results = data.results||[];
+        // 填表
+        const tbody = $('#tbl tbody');
+        tbody.innerHTML = '';
+        results.forEach(r=>{
+          const tr = document.createElement('tr');
+          tr.innerHTML = `<td>${r.ref}</td><td>${r.gen}</td><td>${r.count}</td><td>${r.psnr.toFixed(2)}</td><td>${r.ssim.toFixed(4)}</td>`;
+          tbody.appendChild(tr);
+        });
+        // 画图
+        const ctx = $('#chart').getContext('2d');
+        const labels = results.map((_,i)=>`#${i+1}`);
+        const psnr = results.map(r=>r.psnr);
+        const ssim = results.map(r=>r.ssim);
+        if(chart) chart.destroy();
+        chart = new Chart(ctx, {
+          type: 'bar',
+          data: { labels, datasets: [
+            { label:'PSNR', data: psnr, backgroundColor: 'rgba(99, 132, 255, 0.5)' },
+            { label:'SSIM', data: ssim, backgroundColor: 'rgba(255, 206, 86, 0.5)' }
+          ]},
+          options: { responsive: true, plugins: { legend: { labels: { color:'#eaeef2' } } }, scales: { x: { ticks:{ color:'#eaeef2' } }, y: { ticks:{ color:'#eaeef2' } } } }
+        });
+      }
+      $('#loadBtn').addEventListener('click', load);
+    </script>
+  </body>
+  </html>
+
+
