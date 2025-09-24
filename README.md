@@ -16,7 +16,7 @@
 
 ```
 live2d-generative/
-├── live2d_v4/                  # 输入：Live2D 模型数据集
+├── live/                  # 输入：Live2D 模型数据集
 ├── data/
 │   ├── processed/              # 处理后的数据（索引等）
 │   └── raw/                   # 原始数据备份
@@ -59,7 +59,7 @@ python -m pip install -r requirements.txt
 
 ### 2. 扫描模型数据集
 
-首先扫描 `live2d_v4/` 目录中的所有模型，生成索引：
+首先扫描 `live/` 目录中的所有模型，生成索引：
 
 ```bash
 python scripts/scan_models.py
@@ -159,10 +159,10 @@ python scripts/evaluate_quality.py --ref outputs/complete_copy_002/model.1024 --
 
 ```bash
 # 生成 geometry_delta.json 占位数据
-python scripts/geometry_delta_prepare.py live2d_v4/100100 --out outputs/geometry_delta.json
+python scripts/geometry_delta_prepare.py live/100100 --out outputs/geometry_delta.json
 
 # 调用编辑器导出（占位示例，不执行实际导出）
-powershell -ExecutionPolicy Bypass -File scripts/build_moc3_via_editor.ps1 -TemplateDir live2d_v4/100100 -OutDir outputs/editor_export
+powershell -ExecutionPolicy Bypass -File scripts/build_moc3_via_editor.ps1 -TemplateDir live/100100 -OutDir outputs/editor_export
 ```
 
 #### Web 预览增强
@@ -255,7 +255,7 @@ python pipeline/generate_model.py \
 本项目的端到端流水线以“索引 → 选择模板 → 资产生成 → 打包 → 验证 → 预览”为主线，相关脚本与步骤如下：
 
 1) 索引与验证
-- 扫描：`scripts/scan_models.py` 读取 `live2d_v4/` 并生成 `data/processed/index.json`
+- 扫描：`scripts/scan_models.py` 读取 `live/` 并生成 `data/processed/index.json`
 - 验证：`scripts/validate_model.py` 对模型结构与引用文件进行全面校验
 
 2) 单模型端到端生成（主入口）
@@ -451,7 +451,7 @@ outputs/my_model_001/
 ### 常见问题
 
 **Q: 扫描失败，提示路径错误**
-A: 确保 `live2d_v4/` 目录存在且包含 Live2D 模型
+A: 确保 `live/` 目录存在且包含 Live2D 模型
 
 **Q: 验证失败，提示文件不存在**  
 A: 检查原始模型数据完整性，某些模型可能缺少动作或表情文件
@@ -516,8 +516,8 @@ python -m http.server 5500  # 启服务
 # 浏览 http://localhost:5500/web/preview.html 并输入模型目录（如 outputs/editor_export_100100）
 
 # 几何变形与 Editor 导出（占位）
-python scripts/geometry_delta_prepare.py live2d_v4/100100 --out outputs/geometry_delta.json
-python pipeline/generate_moc3_via_editor.py --template live2d_v4/100100 --out outputs/editor_export --editor "D:\Live2D Cubism 5.2"
+python scripts/geometry_delta_prepare.py live/100100 --out outputs/geometry_delta.json
+python pipeline/generate_moc3_via_editor.py --template live/100100 --out outputs/editor_export --editor "D:\Live2D Cubism 5.2"
 ```
 
 ### 日志与调试
